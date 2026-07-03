@@ -7,8 +7,11 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 INSTALL_SCRIPT_DIR=""
-XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n-ui/n-ui}"
-XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n-ui/releases/download/n-ui-assets}}"
+XUI_RAW_BASE="${XUI_RAW_BASE:-https://raw.githubusercontent.com/torr9522/n2-ui/main}"
+XUI_REPO_URL="${XUI_REPO_URL:-https://github.com/torr9522/n2-ui.git}"
+XUI_REPO_BRANCH="${XUI_REPO_BRANCH:-main}"
+INSTALL_MODE="${INSTALL_MODE:-source}"
+XUI_RELEASES_BASE="${XUI_RELEASES_BASE:-${XUI_RELEASES_RAW_BASE:-https://github.com/torr9522/n2-ui/releases/download/n2-ui-assets}}"
 
 resolve_install_script_dir() {
     local script_source="${BASH_SOURCE[0]:-$0}"
@@ -230,10 +233,10 @@ fi
 
 install_base() {
     if [[ x"${release}" == x"centos" ]]; then
-        yum install wget curl tar jq nftables sqlite python3 unzip logrotate -y || error_exit "基础依赖安装失败。"
+        yum install wget curl tar jq nftables sqlite python3 unzip logrotate git -y || error_exit "基础依赖安装失败。"
     else
         apt-get update || error_exit "apt-get update 失败。"
-        DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl tar jq nftables sqlite3 python3 unzip logrotate || error_exit "基础依赖安装失败。"
+        DEBIAN_FRONTEND=noninteractive apt-get install -y wget curl tar jq nftables sqlite3 python3 unzip logrotate git ca-certificates || error_exit "基础依赖安装失败。"
     fi
 }
 
@@ -263,6 +266,11 @@ ensure_go_toolchain() {
     fi
 
     if [[ "$need_install" -eq 0 ]]; then
+        local go_path
+        go_path="$(command -v go)"
+        if [[ "${go_path}" != "/usr/local/bin/go" && ! -x /usr/local/bin/go ]]; then
+            ln -sf "${go_path}" /usr/local/bin/go || return 1
+        fi
         return 0
     fi
 
@@ -536,7 +544,7 @@ install_x-ui() {
     local url
     local local_source_dir=""
     if [[ $# -eq 0 || -z "${1:-}" ]]; then
-        last_version="k-ui-local"
+        last_version="n2-ui-source"
     else
         last_version="$1"
     fi
@@ -550,6 +558,44 @@ install_x-ui() {
         if ! cp -a "${local_source_dir}" /usr/local/x-ui; then
             error_exit "复制本地源码到 /usr/local/x-ui 失败。"
         fi
+        rm -rf /usr/local/x-ui/.git
+        cd /usr/local/x-ui || error_exit "无法进入 /usr/local/x-ui 目录。"
+        install_build_toolchain || error_exit "编译依赖安装失败。"
+        ensure_go_toolchain || error_exit "Go 工具链安装失败。"
+        if ! CGO_ENABLED=1 GO111MODULE=on /usr/local/bin/go build -o x-ui .; then
+            error_exit "本地源码编译 x-ui 失败。"
+        fi
+        cd /usr/local/ || error_exit "无法进入 /usr/local 目录。"
+    elif [[ "${INSTALL_MODE}" == "source" ]]; then
+        local build_root
+        local source_dir
+        build_root="$(mktemp -d /tmp/n2-ui-build.XXXXXX)"
+        source_dir="${build_root}/repo"
+        echo -e "install source: ${XUI_REPO_URL} (${XUI_REPO_BRANCH})"
+        install_build_toolchain || error_exit "编译依赖安装失败。"
+        ensure_go_toolchain || error_exit "Go 工具链安装失败。"
+        if ! git clone --depth 1 --branch "${XUI_REPO_BRANCH}" "${XUI_REPO_URL}" "${source_dir}"; then
+            rm -rf "${build_root}"
+            error_exit "clone n2-ui 源码失败。"
+        fi
+        cd "${source_dir}" || {
+            rm -rf "${build_root}"
+            error_exit "无法进入 n2-ui 源码目录。"
+        }
+        if ! CGO_ENABLED=1 GO111MODULE=on /usr/local/bin/go build -o x-ui .; then
+            rm -rf "${build_root}"
+            error_exit "源码编译 x-ui 失败。"
+        fi
+        cd /usr/local/ || {
+            rm -rf "${build_root}"
+            error_exit "无法进入 /usr/local 目录。"
+        }
+        if ! cp -a "${source_dir}" /usr/local/x-ui; then
+            rm -rf "${build_root}"
+            error_exit "复制 n2-ui 源码到 /usr/local/x-ui 失败。"
+        fi
+        rm -rf /usr/local/x-ui/.git
+        rm -rf "${build_root}"
     else
         if [[ "${package_arch}" == "arm64" ]]; then
             echo -e "${yellow}Only amd64 local release is provided, fallback to amd64 package and rebuild locally.${plain}"
@@ -559,7 +605,7 @@ install_x-ui() {
         package_file="/usr/local/x-ui-linux-${package_arch}.tar.gz"
         echo -e "install source: ${url}"
         if ! download_file "${package_file}" "${url}"; then
-            error_exit "download failed, please check n-ui release assets"
+            error_exit "download failed, please check n2-ui release assets"
         fi
         if ! tar -tzf "${package_file}" >/dev/null 2>&1; then
             error_exit "下载的 x-ui 安装包损坏：${package_file}"
