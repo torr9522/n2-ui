@@ -7,9 +7,10 @@ import (
 type XUIController struct {
 	BaseController
 
-	inboundController  *InboundController
-	settingController  *SettingController
-	accessIPController *AccessIPController
+	inboundController      *InboundController
+	settingController      *SettingController
+	accessIPController     *AccessIPController
+	shareAddressController *ShareAddressController
 }
 
 func NewXUIController(g *gin.RouterGroup) *XUIController {
@@ -30,6 +31,7 @@ func (a *XUIController) initRouter(g *gin.RouterGroup) {
 	a.inboundController = NewInboundController(g)
 	a.settingController = NewSettingController(g)
 	a.accessIPController = NewAccessIPController(g)
+	a.shareAddressController = NewShareAddressController(g)
 }
 
 func (a *XUIController) index(c *gin.Context) {

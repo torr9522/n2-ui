@@ -49,6 +49,7 @@
                             <a-button style="margin-left: 8px;" icon="profile" @click="showPortLimitStatus"></a-button>
                             <a-button style="margin-left: 8px;" icon="file-text" @click="showPortLimitLogs"></a-button>
                             <a-button style="margin-left: 8px;" icon="bug" @click="showPortLimitDiag"></a-button>
+                            <a-button style="margin-left: 8px;" icon="global" @click="openShareAddressModal">分享地址管理</a-button>
                         </div>
 <!--                        <a-input v-model="searchKey" placeholder="搜索" autofocus style="max-width: 300px"></a-input>-->
                         <a-table :columns="columns" :row-key="dbInbound => dbInbound.id"
@@ -141,6 +142,67 @@
             </a-spin>
         </a-layout-content>
     </a-layout>
+    <a-modal v-model="shareAddressModal.visible" title="分享地址管理" :footer="null"
+             :closable="true" :mask-closable="true" width="720px">
+        <a-form layout="vertical">
+            <a-row :gutter="8">
+                <a-col :xs="24" :sm="10">
+                    <a-form-item label="分享地址">
+                        <a-input v-model.trim="shareAddressModal.form.address"
+                                 placeholder="例如 xgaws.527270.xyz"></a-input>
+                    </a-form-item>
+                </a-col>
+                <a-col :xs="24" :sm="8">
+                    <a-form-item label="备注">
+                        <a-input v-model.trim="shareAddressModal.form.remark"
+                                 placeholder="可选"></a-input>
+                    </a-form-item>
+                </a-col>
+                <a-col :xs="24" :sm="6">
+                    <a-form-item label="操作">
+                        <a-button type="primary" :loading="shareAddressModal.submitting"
+                                  @click="shareAddressModal.submit()">
+                            [[ shareAddressModal.editing ? '保存分享地址' : '添加分享地址' ]]
+                        </a-button>
+                        <a-button v-if="shareAddressModal.editing" style="margin-left: 8px;"
+                                  @click="shareAddressModal.resetForm()">取消</a-button>
+                    </a-form-item>
+                </a-col>
+            </a-row>
+        </a-form>
+        <div style="margin-bottom: 8px;">
+            <a-button icon="reload" size="small" :loading="shareAddressStore.loading"
+                      @click="shareAddressStore.load(true)">刷新列表</a-button>
+        </div>
+        <a-empty v-if="shareAddressStore.addresses.length === 0" description="暂无分享地址"></a-empty>
+        <div v-for="item in shareAddressStore.addresses" :key="item.id"
+             style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+            <div style="min-width: 0;">
+                <div style="font-weight: 500; word-break: break-all;">[[ item.address ]]</div>
+                <div v-if="item.remark" style="color: rgba(0, 0, 0, 0.45); word-break: break-all;">[[ item.remark ]]</div>
+            </div>
+            <div style="white-space: nowrap;">
+                <a-button size="small" @click="shareAddressModal.edit(item)">编辑</a-button>
+                <a-button size="small" type="danger" style="margin-left: 8px;"
+                          @click="shareAddressModal.remove(item)">删除</a-button>
+            </div>
+        </div>
+    </a-modal>
+    <a-modal v-model="customShareQrcodeModal.visible" title="自定义二维码"
+             :closable="true" :mask-closable="true"
+             ok-text="生成" cancel-text="取消" @ok="customShareQrcodeModal.ok()">
+        <a-select v-model="customShareQrcodeModal.selectedAddress"
+                  allow-clear style="width: 100%;"
+                  placeholder="常用分享地址">
+            <a-select-option v-for="item in shareAddressStore.addresses"
+                             :key="item.id" :value="item.address">
+                [[ item.remark ? item.remark + ' - ' + item.address : item.address ]]
+            </a-select-option>
+        </a-select>
+        <a-input v-model.trim="customShareQrcodeModal.manualAddress"
+                 placeholder="手动输入临时分享地址，优先于下拉选择"
+                 style="margin-top: 8px;"></a-input>
+    </a-modal>
 </a-layout>
 {{template "js" .}}
 <script>
@@ -207,6 +269,136 @@
         scopedSlots: { customRender: 'expiryTime' },
     }];
 
+    async function copyShareText(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            document.execCommand('copy');
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    }
+
+    const shareAddressStore = {
+        addresses: [],
+        loading: false,
+        loaded: false,
+        async load(force=false) {
+            if (this.loaded && !force) {
+                return;
+            }
+            this.loading = true;
+            const msg = await HttpUtil.get('/xui/share-domains');
+            this.loading = false;
+            if (!msg.success) {
+                return;
+            }
+            this.addresses.splice(0, this.addresses.length, ...(msg.obj || []));
+            this.loaded = true;
+        },
+    };
+
+    const shareAddressModal = {
+        visible: false,
+        editing: false,
+        submitting: false,
+        form: {
+            id: '',
+            address: '',
+            remark: '',
+        },
+        show() {
+            this.visible = true;
+            this.resetForm();
+            shareAddressStore.load(true);
+        },
+        resetForm() {
+            this.editing = false;
+            this.form.id = '';
+            this.form.address = '';
+            this.form.remark = '';
+        },
+        edit(item) {
+            this.editing = true;
+            this.form.id = item.id;
+            this.form.address = item.address;
+            this.form.remark = item.remark || '';
+        },
+        async submit() {
+            if (ObjectUtil.isEmpty(this.form.address)) {
+                app.$message.error('请输入分享地址');
+                return;
+            }
+            this.submitting = true;
+            const data = {
+                address: this.form.address,
+                remark: this.form.remark,
+            };
+            const msg = this.editing
+                ? await HttpUtil.put(`/xui/share-domains/${this.form.id}`, data)
+                : await HttpUtil.post('/xui/share-domains', data);
+            this.submitting = false;
+            if (!msg.success) {
+                return;
+            }
+            this.resetForm();
+            await shareAddressStore.load(true);
+        },
+        remove(item) {
+            app.$confirm({
+                title: '删除分享地址',
+                content: `确认删除 ${item.address} 吗？`,
+                okText: '删除',
+                cancelText: '取消',
+                onOk: async () => {
+                    const msg = await HttpUtil.delete(`/xui/share-domains/${item.id}`);
+                    if (msg.success) {
+                        await shareAddressStore.load(true);
+                    }
+                },
+            });
+        },
+    };
+
+    const customShareQrcodeModal = {
+        visible: false,
+        dbInbound: null,
+        selectedAddress: undefined,
+        manualAddress: '',
+        show(dbInbound) {
+            this.dbInbound = dbInbound;
+            this.selectedAddress = undefined;
+            this.manualAddress = '';
+            this.visible = true;
+            shareAddressStore.load();
+        },
+        getAddress() {
+            if (!ObjectUtil.isEmpty(this.manualAddress)) {
+                return this.manualAddress;
+            }
+            return this.selectedAddress || '';
+        },
+        ok() {
+            const address = this.getAddress();
+            if (ObjectUtil.isEmpty(address)) {
+                app.$message.error('请输入或选择分享地址');
+                return;
+            }
+            const link = this.dbInbound.genLink(address);
+            this.visible = false;
+            qrModal.show('自定义二维码', link);
+        },
+    };
+
     const app = new Vue({
         delimiters: ['[[', ']]'],
         el: '#app',
@@ -216,6 +408,9 @@
             inbounds: [],
             dbInbounds: [],
             searchKey: '',
+            shareAddressStore,
+            shareAddressModal,
+            customShareQrcodeModal,
         },
         methods: {
             loading(spinning=true) {
@@ -369,18 +564,13 @@
                 qrModal.show('二维码', link);
             },
             showCustomQrcode(dbInbound) {
-                promptModal.open({
-                    title: '自定义二维码',
-                    value: '',
-                    okText: '生成',
-                    confirm: customShareAddress => {
-                        const link = dbInbound.genLink(customShareAddress);
-                        qrModal.show('自定义二维码', link);
-                    },
-                });
+                customShareQrcodeModal.show(dbInbound);
             },
             showInfo(dbInbound) {
                 infoModal.show(dbInbound);
+            },
+            openShareAddressModal() {
+                shareAddressModal.show();
             },
             switchEnable(dbInbound) {
                 this.submit(`/xui/inbound/update/${dbInbound.id}`, dbInbound);

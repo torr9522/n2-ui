@@ -52,6 +52,37 @@ class HttpUtil {
         return msg;
     }
 
+    static async put(url, data, options={}) {
+        let msg;
+        try {
+            options.headers = Object.assign({
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            }, options.headers || {});
+            const resp = await axios.put(url, data, options);
+            msg = this._respToMsg(resp);
+        } catch (e) {
+            msg = new Msg(false, e.toString());
+        }
+        this._handleMsg(msg);
+        return msg;
+    }
+
+    static async delete(url, data, options={}) {
+        let msg;
+        try {
+            const config = Object.assign({}, options);
+            if (data != null) {
+                config.data = data;
+            }
+            const resp = await axios.delete(url, config);
+            msg = this._respToMsg(resp);
+        } catch (e) {
+            msg = new Msg(false, e.toString());
+        }
+        this._handleMsg(msg);
+        return msg;
+    }
+
     static async postWithModal(url, data, modal) {
         if (modal) {
             modal.loading(true);
